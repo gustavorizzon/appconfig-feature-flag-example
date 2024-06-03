@@ -1,0 +1,118 @@
+service: sls-appconfig-test
+frameworkVersion: "3"
+configValidationMode: error
+useDotenv: true
+
+plugins:
+  - serverless-offline
+
+custom:
+  appconfig:
+    appId: !Ref AppConfigApplication
+    envId: !Ref ApplicationEnv
+    configId: !Ref FeatureFlagProfile
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: us-east-1
+  deploymentBucket:
+    blockPublicAccess: true
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - appconfig:StartConfigurationSession
+            - appconfig:GetLatestConfiguration
+          Resource: !Sub arn:aws:appconfig:${aws:region}:${aws:accountId}:application/${AppConfigApplication.ApplicationId}/environment/${ApplicationEnv.EnvironmentId}/configuration/${FeatureFlagProfile.ConfigurationProfileId}
+  environment:
+    APPCONFIG_APPLICATION_ID: ${env:APPCONFIG_APPLICATION_ID, self:custom.appconfig.appId}
+    APPCONFIG_ENVIRONMENT_ID: ${env:APPCONFIG_ENVIRONMENT_ID, self:custom.appconfig.envId}
+    APPCONFIG_PROFILE_ID: ${env:APPCONFIG_PROFILE_ID, self:custom.appconfig.configId}
+
+functions:
+  testFn:
+    handler: test.handler
+    events:
+      - http:
+          method: get
+          path: feature-flag
+
+resources:
+  Resources:
+    AppConfigApplication:
+      Type: AWS::AppConfig::Application
+      Properties:
+        Name: appconfig-test
+        Description: some description
+        Tags:
+          - Key: ManagedBy
+            Value: Serverless Framework
+
+    ApplicationEnv:
+      Type: AWS::AppConfig::Environment
+      Properties:
+        Name: ${opt:stage}
+        ApplicationId: !Ref AppConfigApplication
+        Tags:
+          - Key: ManagedBy
+            Value: Serverless Framework
+
+    DeploymentStrategy:
+      Type: AWS::AppConfig::DeploymentStrategy
+      Properties:
+        Name: instant-full-no-bake
+        DeploymentDurationInMinutes: 0
+        FinalBakeTimeInMinutes: 0
+        GrowthFactor: 100
+        ReplicateTo: NONE
+        Tags:
+          - Key: ManagedBy
+            Value: Serverless Framework
+
+    FeatureFlagProfile:
+      Type: AWS::AppConfig::ConfigurationProfile
+      Properties:
+        Name: test-feature-flag
+        ApplicationId: !Ref AppConfigApplication
+        LocationUri: hosted
+        Type: AWS.AppConfig.FeatureFlags # this is important
+        Tags:
+          - Key: ManagedBy
+            Value: Serverless Framework
+
+    FeatureFlagVersion:
+      Type: AWS::AppConfig::HostedConfigurationVersion
+      Properties:
+        ApplicationId: !Ref AppConfigApplication
+        ConfigurationProfileId: !Ref FeatureFlagProfile
+        ContentType: application/json
+        VersionLabel: v1.0.0
+        Content: ${file(get-feature-flags.js):getAsString}
+
+    FeatureFlagInitialDeployment:
+      Type: AWS::AppConfig::Deployment
+      Properties:
+        ApplicationId: !Ref AppConfigApplication
+        ConfigurationProfileId: !Ref FeatureFlagProfile
+        DeploymentStrategyId: !Ref DeploymentStrategy
+        EnvironmentId: !Ref ApplicationEnv
+        ConfigurationVersion: v1.0.0
+
+  Outputs:
+    ApplicationId:
+      Value:
+        Ref: AppConfigApplication
+    ConfigurationProfileId:
+      Value:
+        Ref: FeatureFlagProfile
+    DeploymentStrategyId:
+      Value:
+        Ref: DeploymentStrategy
+    EnvironmentId:
+      Value:
+        Ref: ApplicationEnv
+
+package:
+  excludeDevDependencies: true
